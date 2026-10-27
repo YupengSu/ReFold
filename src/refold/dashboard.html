@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* One run: a header with the clock, a row of numbers, the KV-cache pool and request queue,
+   one lane per session, and three time series. */
+:root {
+  --bg: #f4f6f9; --card: #ffffff; --ink: #18202c; --muted: #5b6575; --faint: #8a93a2; --line: #e1e5ec;
+  --track: #eef1f5; --acc: #3f5fa8; --acc-2: #8fa5d6; --alt: #b07a1c;
+  --ok: #2f7d52; --bad: #b4442f; --warn: #a86a12;
+  --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e131b; --card: #151c27; --ink: #e5e9f0; --muted: #a0a9b7; --faint: #6f7a8a; --line: #253042;
+  --track: #1c2532; --acc: #7f9ce3; --acc-2: #435a91; --alt: #d9a441;
+  --ok: #5cc28a; --bad: #e0775f; --warn: #d9a441; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0e131b; --card: #151c27; --ink: #e5e9f0; --muted: #a0a9b7; --faint: #6f7a8a; --line: #253042;
+  --track: #1c2532; --acc: #7f9ce3; --acc-2: #435a91; --alt: #d9a441;
+  --ok: #5cc28a; --bad: #e0775f; --warn: #d9a441; color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.4 var(--sans); font-variant-numeric: tabular-nums;
+       padding: 22px max(16px, env(safe-area-inset-right, 0px)) 22px max(16px, env(safe-area-inset-left, 0px)); }
+.wrap { max-width: 1400px; margin: 0 auto; display: grid; gap: 16px; }
+header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+h1 { font: 650 24px/1.15 var(--mono); margin: 0; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.setup { color: var(--muted); font-size: 14px; margin-top: 6px; }
+.clock { text-align: right; }
+.clock .t { font: 600 38px/1 var(--mono); letter-spacing: -0.02em; }
+.clock .l { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; min-width: 0; }
+.stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1100px) { .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px 9px; min-width: 0; }
+.stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.stat .v { font: 600 26px/1.15 var(--sans); margin-top: 2px; white-space: nowrap; }
+.stat .v small { font-size: 15px; color: var(--muted); font-weight: 500; }
+.stat .s { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pool { display: grid; gap: 10px; }
+.pool .row { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
+.pool .row b { color: var(--ink); font-weight: 600; }
+.pool .bar { position: relative; height: 16px; border-radius: 4px; background: var(--track); overflow: hidden; }
+.pool .fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 4px; background: var(--acc); }
+.pool .fill.full { background: var(--bad); }
+.queue { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; color: var(--muted); font-size: 12px; }
+.queue .qs { display: flex; flex-wrap: wrap; gap: 3px; min-height: 12px; }
+.queue .qs i { width: 10px; height: 10px; border-radius: 2px; background: var(--bad); opacity: .85; }
+.queue .qn { white-space: nowrap; }
+.queue .qn b { color: var(--ink); font-weight: 600; }
+.sess-h { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.sess-h h2 { font-size: 14px; margin: 0; font-weight: 600; }
+.sess-h span { color: var(--muted); font-size: 12px; }
+.lanes { display: grid; gap: 4px; }
+.axis { display: grid; grid-template-columns: 150px minmax(0, 1fr) 96px; gap: 10px; color: var(--faint); font-size: 11px; }
+.axis .ticks { position: relative; height: 14px; }
+.axis .ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.axis .ticks span:first-child { transform: none; }
+.lane { display: grid; grid-template-columns: 150px minmax(0, 1fr) 96px; gap: 10px; align-items: center; height: 20px; }
+.lane .id { font: 12px/1 var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane .tr { position: relative; height: 14px; background: var(--track); border-radius: 3px; }
+.lane .hist { position: absolute; inset: 0 auto 0 0; border: 1.5px dashed var(--faint); border-left: 0; border-radius: 0 3px 3px 0; opacity: .7; }
+.lane .gone { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, var(--acc-2) 0 4px, transparent 4px 8px); border-radius: 3px; opacity: 0; }
+.lane .cur { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--acc); }
+.lane.tool .cur { opacity: .5; }
+.lane.wait .cur { opacity: .3; }
+.lane.done .cur, .lane.done .hist { opacity: .18; }
+.lane .st { font: 12px/1 var(--mono); color: var(--muted); text-align: right; white-space: nowrap; }
+.lane.done .st { color: var(--ok); }
+.lane.fail .st { color: var(--bad); }
+.lanes.dense { gap: 2px; }
+.lanes.dense .lane { height: 11px; }
+.lanes.dense .lane .tr { height: 8px; border-radius: 2px; }
+.lanes.dense .lane .id, .lanes.dense .lane .st { font-size: 9.5px; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 12px; margin-top: 10px; }
+.legend i { display: inline-block; width: 18px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 1100px) { .charts { grid-template-columns: minmax(0, 1fr); } }
+.chart h2 { font-size: 13px; margin: 0 0 6px; font-weight: 600; }
+.chart h2 .k { color: var(--muted); font-weight: 500; font-size: 12px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .gl { stroke: var(--line); stroke-width: 1; }
+.chart .tx { fill: var(--faint); font: 11px var(--sans); }
+.chart .l1 { fill: none; stroke: var(--acc); stroke-width: 2.2; }
+.chart .l2 { fill: none; stroke: var(--bad); stroke-width: 1.8; }
+.chart .ph { stroke: var(--ink); stroke-width: 1; opacity: .35; }
+.chart .full { stroke: var(--bad); stroke-width: 1; stroke-dasharray: 2 3; opacity: .7; }
+.ctl { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+.ctl button, .ctl select { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.ctl input[type=range] { width: min(420px, 60vw); }
+.ctl button:focus-visible, .ctl select:focus-visible, .ctl input:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.note { color: var(--faint); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<!--DASH_CFG-->
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1 id="name">run</h1>
+      <div class="setup" id="setup"></div>
+    </div>
+    <div class="clock"><div class="t" id="clock">00:00</div><div class="l" id="clock-l">elapsed</div></div>
+  </header>
+  <div class="ctl" id="ctl" hidden>
+    <button id="play" type="button">Pause</button>
+    <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Position in the run">
+    <label>Speed <select id="speed"></select></label>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="card pool">
+    <div class="row"><span>KV-cache pool</span><span><b id="pv">0%</b> in use · peak <b id="pk">0%</b></span></div>
+    <div class="bar"><div class="fill" id="pf"></div></div>
+    <div class="queue"><span>Waiting for KV cache</span><span class="qs" id="qs"></span><span class="qn" id="qn"></span></div>
+  </div>
+  <div class="card">
+    <div class="sess-h"><h2>Sessions</h2><span id="sess-n"></span></div>
+    <div class="lanes" id="lanes"><div class="axis"><span></span><div class="ticks" id="ticks"></div><span style="text-align:right">tokens</span></div></div>
+    <div class="legend">
+      <span><i style="background:var(--acc)"></i>context sent in the current model call</span>
+      <span><i style="background:var(--acc);opacity:.5"></i>running a command</span>
+      <span><i style="border:1.5px dashed var(--faint);background:transparent"></i>the session's full history</span>
+      <span><i style="background:repeating-linear-gradient(135deg,var(--acc-2) 0 4px,transparent 4px 8px)"></i>just removed from the context</span>
+    </div>
+  </div>
+  <div class="charts">
+    <div class="card chart"><h2>KV-cache usage</h2><svg id="ch-kv" viewBox="0 0 600 170" role="img" aria-label="KV-cache usage over time"></svg></div>
+    <div class="card chart"><h2>Requests <span class="k">running · <span style="color:var(--bad)">waiting</span></span></h2><svg id="ch-req" viewBox="0 0 600 170" role="img" aria-label="Running and waiting requests over time"></svg></div>
+    <div class="card chart"><h2>Tasks finished</h2><svg id="ch-done" viewBox="0 0 600 170" role="img" aria-label="Tasks finished over time"></svg></div>
+  </div>
+  <div class="note" id="note"></div>
+</div>
+<script>
+"use strict";
+const CFG = window.DASH_CFG || { name: "run", mode: "replay", rates: null };
+const Q = new URLSearchParams(location.search);
+if (Q.get("theme")) document.documentElement.dataset.theme = Q.get("theme");
+const MAX_LANES = 64;  // above this, only the sessions that are running get a lane
+
+// ------------------------------------------------------------------ the data
+const S = { tasks: new Map(), metrics: [], plan: {}, origin: null, resolved: null };
+let offsets = {};
+function ingest(d) {
+  if (d.plan && Object.keys(d.plan).length) S.plan = d.plan;
+  if (d.resolved) S.resolved = new Set(d.resolved);
+  for (const r of d.live || []) {
+    let t = S.tasks.get(r.task);
+    if (!t) { t = { id: r.task, start: null, end: null, exit: "", calls: [] }; S.tasks.set(r.task, t); }
+    if (r.ev === "start") t.start = r.t;
+    else if (r.ev === "end") { t.end = r.t; t.exit = r.exit_status || ""; }
+    else if (r.ev === "call") t.calls.push(r);
+  }
+  if ((d.metrics || []).length) { for (const m of d.metrics) S.metrics.push(m); S.metrics.sort((x, y) => x.t - y.t); }
+  for (const t of S.tasks.values()) t.calls.sort((x, y) => x.t0 - y.t0);
+  const starts = [...S.tasks.values()].map(t => t.start).filter(x => x != null);
+  if (starts.length) S.origin = Math.min(...starts);
+  if (d.offsets) offsets = d.offsets;
+}
+
+const lastLE = (arr, key, v) => { let lo = 0, hi = arr.length - 1, ans = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (arr[mid][key] <= v) { ans = mid; lo = mid + 1; } else hi = mid - 1; } return ans; };
+const kvOf = (m) => (m["vllm:kv_cache_usage_perc"] ?? m["vllm:gpu_cache_usage_perc"] ?? 0);
+const histOf = (c) => c.prompt && c.sent_chars ? c.prompt * c.hist_chars / c.sent_chars : (c.prompt || 0);
+const costOf = (c) => CFG.rates ? (CFG.rates[0] * ((c.prompt || 0) - (c.cached || 0)) + CFG.rates[1] * (c.cached || 0) + CFG.rates[2] * (c.completion || 0)) / 1e6 : 0;
+const mmss = (s) => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : String(m).padStart(2, "0")) + ":" + String(x).padStart(2, "0"); };
+const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 1 : 2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(Math.round(n));
+function short(id) { const m = /^([^_]+)__(.+)-(\d+)$/.exec(id); return m ? `${m[1]}-${m[3]}` : id; }
+function nTasks() { return Math.max(S.tasks.size, S.plan.instances || 0); }
+function finished() { const ts = [...S.tasks.values()]; return ts.length > 0 && ts.length >= nTasks() && ts.every(t => t.end != null); }
+function span() {
+  if (S.origin == null) return 1;
+  let T = 0;
+  for (const t of S.tasks.values()) { const last = t.end ?? (t.calls.length ? t.calls[t.calls.length - 1].t1 : t.start); T = Math.max(T, last - S.origin); }
+  if (S.metrics.length) T = Math.max(T, Math.min(S.metrics[S.metrics.length - 1].t - S.origin, T + 60));
+  return Math.max(T, 1);
+}
+function scaleMax() {
+  let X = 0;
+  for (const t of S.tasks.values()) for (const c of t.calls) X = Math.max(X, c.prompt || 0, histOf(c));
+  const nice = [2e4, 5e4, 1e5, 1.5e5, 2e5, 2.5e5];
+  return nice.find(v => v >= X * 1.02) || Math.max(5e4, Math.ceil(X / 5e4) * 5e4);
+}
+
+// ------------------------------------------------------------------ the page
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+const statsBox = document.getElementById("stats");
+const mkStat = (k) => { const b = el("div", "stat", `<div class="k">${k}</div><div class="v">–</div><div class="s">&nbsp;</div>`); statsBox.append(b);
+  return { v: b.querySelector(".v"), s: b.querySelector(".s") }; };
+const ST = { done: mkStat("Tasks"), calls: mkStat("Model calls"), tok: mkStat("Tokens"), cost: mkStat("Spend"), kv: mkStat("KV cache"), q: mkStat("Queue") };
+const lanesBox = document.getElementById("lanes"), rows = new Map();
+function laneRow(id) {
+  let r = rows.get(id);
+  if (r) return r;
+  const row = el("div", "lane", `<span class="id" title="${id}">${short(id)}</span><div class="tr"><div class="hist"></div><div class="gone"></div><div class="cur"></div></div><span class="st"></span>`);
+  r = { row, hist: row.querySelector(".hist"), gone: row.querySelector(".gone"), cur: row.querySelector(".cur"), st: row.querySelector(".st") };
+  rows.set(id, r);
+  for (const k of [...rows.keys()].sort()) lanesBox.append(rows.get(k).row);
+  return r;
+}
+let X = 1e5, T = 1, charts = null;
+function setTicks() {
+  const box = document.getElementById("ticks"); box.innerHTML = "";
+  const step = X <= 5e4 ? 1e4 : X <= 1e5 ? 2.5e4 : 5e4;
+  for (let v = 0; v <= X + 1; v += step) { const sp = el("span", null, v ? fmtTok(v) : "0"); sp.style.left = (100 * v / X) + "%"; if (v >= X) sp.style.transform = "translateX(-100%)"; box.append(sp); }
+}
+
+// ------------------------------------------------------------------ charts
+const NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.append(e); return e; }
+function stepPts(times) { const pts = [[0, 0]]; times.forEach((e, i) => { pts.push([e, i]); pts.push([e, i + 1]); }); return pts; }
+function drawCharts() {
+  const W = 600, H = 170, L = 36, R = 8, Tp = 8, B = 24;
+  const X0 = (s) => L + (W - L - R) * s / T;
+  const tickStep = [30, 60, 120, 300, 600, 900, 1200, 1800, 3600, 7200].find(v => T / v <= 5) || 14400;
+  const o = S.origin ?? 0;
+  const maxReq = Math.max(1, ...S.metrics.map(m => (m["vllm:num_requests_running"] || 0) + 0), ...S.metrics.map(m => m["vllm:num_requests_waiting"] || 0));
+  const ends = [...S.tasks.values()].filter(t => t.end != null).map(t => t.end - o).sort((a, b) => a - b);
+  const specs = [
+    ["ch-kv", 100, [0, 50, 100], (v) => v + "%", [["l1", S.metrics.map(m => [m.t - o, 100 * kvOf(m)])]]],
+    ["ch-req", maxReq, [0, Math.round(maxReq / 2), maxReq], String,
+      [["l1", S.metrics.map(m => [m.t - o, m["vllm:num_requests_running"] || 0])], ["l2", S.metrics.map(m => [m.t - o, m["vllm:num_requests_waiting"] || 0])]]],
+    ["ch-done", Math.max(1, nTasks()), [0, Math.round(nTasks() / 2), nTasks()], String, [["l1", stepPts(ends)]]],
+  ];
+  const out = {};
+  for (const [id, ym, yt, fmtY, series] of specs) {
+    const svg = document.getElementById(id); svg.innerHTML = "";
+    const Y = (v) => Tp + (H - Tp - B) * (1 - v / ym);
+    for (const v of yt) { svgEl("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), class: "gl" }, svg); svgEl("text", { x: L - 6, y: Y(v) + 4, class: "tx", "text-anchor": "end" }, svg).textContent = fmtY(v); }
+    for (let s = 0; s <= T + 0.1; s += tickStep) svgEl("text", { x: X0(s), y: H - 6, class: "tx", "text-anchor": s === 0 ? "start" : "middle" }, svg).textContent = mmss(s);
+    if (id === "ch-kv") svgEl("line", { x1: L, x2: W - R, y1: Y(100), y2: Y(100), class: "full" }, svg);
+    const clip = svgEl("clipPath", { id: id + "-clip" }, svgEl("defs", {}, svg));
+    const rect = svgEl("rect", { x: 0, y: 0, width: L, height: H }, clip);
+    if (S.origin != null) for (const [cls, pts0] of series) {
+      const pts = pts0.filter(p => p[0] >= 0);
+      if (pts.length) svgEl("path", { d: pts.map((p, i) => (i ? "L" : "M") + X0(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1)).join(""), class: cls, "clip-path": `url(#${id}-clip)` }, svg);
+    }
+    const ph = svgEl("line", { x1: L, x2: L, y1: Tp, y2: H - B, class: "ph" }, svg);
+    out[id] = { rect, ph, X0 };
+  }
+  charts = out;
+}
+
+// ------------------------------------------------------------------ one frame
+function render(tau) {
+  document.getElementById("clock").textContent = mmss(tau);
+  if (S.origin == null) return;
+  const now = S.origin + tau, n = nTasks();
+  let done = 0, fail = 0, running = 0, tok = 0, cached = 0, prompt = 0, cost = 0, ncalls = 0;
+  const show = n <= MAX_LANES;
+  for (const t of S.tasks.values()) {
+    const active = t.start != null && t.start <= now && !(t.end != null && t.end <= now);
+    const i = lastLE(t.calls, "t0", now);
+    for (let j = 0; j <= i; j++) { const c = t.calls[j]; if (c.t1 <= now) { tok += (c.prompt || 0) + (c.completion || 0); prompt += c.prompt || 0; cached += c.cached || 0; cost += costOf(c); ncalls++; } }
+    if (t.end != null && now >= t.end) { if (t.exit === "Submitted") done++; else fail++; }
+    else if (active) running++;
+    if (!show && !active) { const r = rows.get(t.id); if (r) { r.row.remove(); rows.delete(t.id); } continue; }
+    const r = laneRow(t.id);
+    let cls = "lane", label = "";
+    if (t.start == null || now < t.start) { cls += " wait"; label = "queued"; }
+    let curW = 0, histW = 0;
+    r.gone.style.opacity = "0";
+    if (i >= 0) {
+      const c = t.calls[i];
+      curW = c.prompt || 0; histW = histOf(c);
+      if (now >= c.t1) cls += " tool";
+      label = `step ${c.step}`;
+      const prev = i > 0 ? t.calls[i - 1] : null, flashFor = 3 * (window.SPEED || 1);
+      if (prev && (prev.prompt || 0) > curW * 1.04 && now - c.t0 < flashFor) {
+        r.gone.style.left = (100 * curW / X) + "%"; r.gone.style.width = (100 * ((prev.prompt || 0) - curW) / X) + "%";
+        r.gone.style.opacity = String(1 - (now - c.t0) / flashFor);
+      }
+    }
+    if (t.end != null && now >= t.end) {
+      const ok = t.exit === "Submitted", res = S.resolved ? S.resolved.has(t.id) : null;
+      cls += ok ? " done" : " done fail";
+      label = (res === null ? (ok ? "✓ " : "✕ ") : res ? "✓ " : "✕ ") + mmss(t.end - t.start);
+    }
+    r.row.className = cls;
+    r.cur.style.width = Math.min(100, 100 * curW / X) + "%";
+    r.hist.style.width = Math.min(100, 100 * histW / X) + "%";
+    r.hist.style.display = histW > curW * 1.02 ? "" : "none";
+    r.st.textContent = label;
+  }
+  document.getElementById("sess-n").textContent = show ? `${n} sessions, ${running} running` : `${running} running of ${n} (only running sessions shown)`;
+  const mi = lastLE(S.metrics, "t", now), m = mi >= 0 ? S.metrics[mi] : null, m0 = S.metrics[0] || {};
+  const kv = m ? 100 * kvOf(m) : 0, wait = m ? (m["vllm:num_requests_waiting"] || 0) : 0;
+  let peak = 0; for (let j = 0; j <= mi; j++) peak = Math.max(peak, 100 * kvOf(S.metrics[j]));
+  const d = (k) => m ? (m[k] || 0) - (m0[k] || 0) : 0;
+  const pre = d("vllm:num_preemptions_total"), qn = d("vllm:request_queue_time_seconds_count"), qs = d("vllm:request_queue_time_seconds_sum");
+  const ended = done + fail, resolved = S.resolved ? S.resolved.size : null;
+  ST.done.v.innerHTML = `${ended}<small> / ${n}</small>`;
+  ST.done.s.textContent = resolved != null ? `${resolved} resolved · ${running} running` : `${done} submitted · ${fail} other · ${running} running`;
+  ST.calls.v.textContent = String(ncalls);
+  ST.calls.s.textContent = ended ? `${(ncalls / Math.max(1, ended + running)).toFixed(1)} per task so far` : " ";
+  ST.tok.v.textContent = fmtTok(tok);
+  ST.tok.s.textContent = prompt ? `cache hit ${Math.round(100 * cached / prompt)}%` : " ";
+  ST.cost.v.textContent = CFG.rates ? "$" + cost.toFixed(2) : "–";
+  ST.cost.s.textContent = CFG.rates ? (ended ? `${(100 * cost / Math.max(1, ended + running)).toFixed(1)}¢ per task` : "at the hosted rates") : "no rates for this model";
+  ST.kv.v.textContent = Math.round(kv) + "%";
+  ST.kv.s.textContent = `peak ${Math.round(peak)}%`;
+  ST.q.v.textContent = String(Math.round(wait));
+  ST.q.s.textContent = `${Math.round(pre)} preempted · wait ${qn ? (qs / qn).toFixed(2) : "0.00"} s`;
+  document.getElementById("pv").textContent = Math.round(kv) + "%";
+  document.getElementById("pk").textContent = Math.round(peak) + "%";
+  const f = document.getElementById("pf"); f.style.width = Math.min(100, kv) + "%"; f.classList.toggle("full", kv >= 97);
+  const box = document.getElementById("qs"), want = Math.round(wait);
+  while (box.children.length < want) box.append(el("i")); while (box.children.length > want) box.lastChild.remove();
+  document.getElementById("qn").innerHTML = `<b>${want}</b> waiting · <b>${Math.round(pre)}</b> preempted`;
+  if (charts) for (const c of Object.values(charts)) { const x = c.X0(Math.min(tau, T)); c.ph.setAttribute("x1", x); c.ph.setAttribute("x2", x); c.rect.setAttribute("width", x); }
+}
+
+function header() {
+  const p = S.plan || {};
+  document.getElementById("name").textContent = CFG.name;
+  document.title = "Run Dashboard";
+  const model = String(p.model_name || "").replace(/^openai\//, "").replace(/^[^/]+\//, "");
+  const budget = p.context_budget ? `budget ${fmtTok(p.context_budget)}` : "";
+  document.getElementById("setup").textContent = [model, p.benchmark, p.arm || p.strategy, `${nTasks()} tasks`,
+    p.workers ? `${p.workers} sessions` : "", budget].filter(Boolean).join(" · ");
+}
+function layout() {
+  const dense = Math.min(nTasks(), MAX_LANES) > 20;
+  lanesBox.classList.toggle("dense", dense);
+  X = scaleMax(); T = span(); setTicks(); drawCharts(); header();
+}
+
+if (CFG.mode === "live" && !window.DASH_DATA) {
+  async function poll() {
+    try { const r = await fetch("data", { method: "POST", body: JSON.stringify(offsets) }); ingest(await r.json()); layout();
+      document.getElementById("note").textContent = ""; }
+    catch (e) { document.getElementById("note").textContent = "Lost the server (the run may have ended): " + e; }
+  }
+  poll(); setInterval(poll, 2000);
+  setInterval(() => { if (S.origin == null) { document.getElementById("clock-l").textContent = "waiting for the first task"; return; }
+    const fin = finished(), tau = fin ? T : Date.now() / 1000 - S.origin;
+    document.getElementById("clock-l").textContent = fin ? "elapsed · run finished" : "elapsed · live";
+    render(tau); }, 250);
+} else {
+  ingest(window.DASH_DATA || {}); layout();
+  const speeds = [1, 2, 5, 10, 20, 30, 60, 120, 240, 480];
+  window.SPEED = Number(Q.get("speed")) || speeds.find(v => T / v <= 90) || 480;
+  const sel = document.getElementById("speed");
+  for (const v of speeds) { const o = el("option", null, v + "×"); o.value = v; if (v === window.SPEED) o.selected = true; sel.append(o); }
+  const lbl = () => document.getElementById("clock-l").textContent = `elapsed · replay at ${window.SPEED}×`; lbl();
+  let tau = 0, playing = true, last = performance.now();
+  const scrub = document.getElementById("scrub"), play = document.getElementById("play");
+  document.getElementById("ctl").hidden = false;
+  sel.onchange = () => { window.SPEED = Number(sel.value); lbl(); };
+  play.onclick = () => { playing = !playing; play.textContent = playing ? "Pause" : "Play"; last = performance.now(); if (playing && tau >= T) tau = 0; };
+  scrub.oninput = () => { tau = T * scrub.value / 1000; render(tau); };
+  const loop = (now) => { if (playing) { tau = Math.min(T, tau + (now - last) / 1000 * window.SPEED); scrub.value = String(Math.round(1000 * tau / T)); render(tau);
+    if (tau >= T) { playing = false; play.textContent = "Replay"; } } last = now; requestAnimationFrame(loop); };
+  requestAnimationFrame(loop); render(0);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "refold"
+version = "1.0.0"
+description = "ReFold: training-free reversible inter-turn context folding for long-horizon agents (mini-swe-agent implementation)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Pinned below 3: refold subclasses DefaultAgent and calls LitellmModel._query for
+    # compaction. tests/test_upstream_contract.py checks every symbol relied on.
+    "mini-swe-agent>=2.2.8,<3",
+    "litellm>=1.0",
+    "pyyaml",
+    "datasets",
+]
+
+[project.optional-dependencies]
+# swebench 5.x expects an `image` field SWE-Bench_Verified lacks; 4.1.0 scored every
+# reported number.
+swebench = ["swebench>=3.0,<5", "docker"]
+msb = ["multi-swe-bench==1.1.2"]
+# The inference engine of every reported run.
+serve = ["vllm==0.19.1"]
+dev = ["pytest", "ruff"]
+
+[project.urls]
+Paper = "https://arxiv.org/abs/2610.07863"
+Repository = "https://github.com/YupengSu/ReFold"
+
+[project.scripts]
+refold = "refold.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/refold"]
+
+[tool.ruff]
+line-length = 120
