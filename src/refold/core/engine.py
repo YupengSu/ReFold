@@ -127,15 +127,17 @@ class ReFoldEngine:
         self.folds: list[fold.Fold] = []
         self.removed: dict[int, str] = {}  # step -> "folded" | "compressed" (deduplicated) in the last prompt
         self.cwd: str = cwd
-        self.labels = {"replies": 0, "progress_missing": 0, "stale_out_of_window": 0}
+        self.labels = {"replies": 0, "progress_missing": 0, "stale_out_of_window": 0, "labels_in_command": 0}
         self.restores = dict.fromkeys(("calls", "folded", "compressed", "shown", "invalid"), 0)
         self.reruns = dict.fromkeys(("folded", "folded_identical", "compressed", "compressed_identical"), 0)
 
     # ------------------------------------------------------------------ OBSERVE
-    def observe(self, commands: list[str], observations: list[dict]) -> None:
+    def observe(self, commands: list[str], observations: list[dict], labels: str = "") -> None:
         """OBSERVE: append the new turns to the record, read PROGRESS_t and
         STALE_t from the reply that issued them, and update S_t. The reply and then the
-        `observations` are the last messages of the history."""
+        `observations` are the last messages of the history. `labels`: PROGRESS/STALE lines
+        the reply put at the start of its commands (parse.split_labels), read when its text
+        has none."""
         reply_idx = len(self.messages) - len(observations) - 1
         for offset, (cmd, obs) in enumerate(zip(commands, observations)):
             self._count_rerun(cmd, obs.get("content", "") or "")
@@ -147,15 +149,18 @@ class ReFoldEngine:
             return
         content = self.messages[self.reply_msg[-1]].get("content", "") or ""
         progress = parse.parse_progress(content)
+        if progress is None and labels:
+            progress = parse.parse_progress(labels)
         self.labels["replies"] += 1
         self.labels["progress_missing"] += progress is None
+        self.labels["labels_in_command"] += bool(labels)
         while len(self.progress) < t:  # every turn of this reply shares its PROGRESS
             self.progress.append(progress or "")
             self.has_progress.append(progress is not None)
         w = self.config.chunk_size if self.config.stale_window is None else self.config.stale_window
         first = t - len(commands)  # this reply's first step; its own steps have no output yet
         lo, hi = (0 if w == 0 else first - w), first - 1  # the last w steps before this reply
-        named = parse.parse_stale(content)
+        named = parse.parse_stale(content) or parse.parse_stale(labels, max_lines=len(labels.splitlines()))
         self.labels["stale_out_of_window"] += sum(not lo <= s <= hi for s in named)
         if self.config.stale_source == "agent":
             self.stale.update(s for s in named if lo <= s <= hi)
