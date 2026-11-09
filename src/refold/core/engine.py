@@ -22,7 +22,7 @@ the same form. An adapter feeds it: refold.strategies.refold.agent for mini-swe-
 
 Indexing. A turn is one tool call and its output. Steps are numbered from 0, as the
 `[step N]` labels and STALE show them to the model: step s renders in full iff s >= b_t,
-and the reply that issued step t-1 may name steps t-1-k .. t-2.
+and a reply that issued steps f .. t-1 may name steps f-k .. f-1 (one call: t-1-k .. t-2).
 """
 
 from __future__ import annotations
@@ -153,7 +153,8 @@ class ReFoldEngine:
             self.progress.append(progress or "")
             self.has_progress.append(progress is not None)
         w = self.config.chunk_size if self.config.stale_window is None else self.config.stale_window
-        lo, hi = (0 if w == 0 else t - 1 - w), t - 2  # the last w steps before this one
+        first = t - len(commands)  # this reply's first step; its own steps have no output yet
+        lo, hi = (0 if w == 0 else first - w), first - 1  # the last w steps before this reply
         named = parse.parse_stale(content)
         self.labels["stale_out_of_window"] += sum(not lo <= s <= hi for s in named)
         if self.config.stale_source == "agent":

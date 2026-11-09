@@ -6,7 +6,7 @@ import copy
 import re
 
 import pytest
-from helpers import make_agent
+from helpers import assert_every_tool_call_answered, make_agent
 
 from refold.strategies.refold.agent import PROMPTS, ReFoldAgent
 
@@ -118,6 +118,28 @@ def test_stale_is_accepted_only_within_the_last_k_steps(corpus):
     assert agent.stale == {1, 2} and agent.labels["stale_out_of_window"] == 1
 
 
+@pytest.mark.parametrize("window,stale,out", [(None, {1, 2, 3}, 3), (0, {0, 1, 2, 3}, 2)])
+def test_a_reply_with_several_calls_names_the_steps_before_its_first_call(tmp_path, window, stale, out):
+    # The window ends before the reply's first call, not its last: the model saw [step 0..3]
+    # when it wrote STALE, and steps 4-7 (its own calls) had no output yet.
+    from refold.core.engine import ReFoldEngine, ReFoldKnobs
+
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"}]
+    engine = ReFoldEngine(ReFoldKnobs(stale_window=window), lambda: msgs, cwd=str(tmp_path))
+
+    def reply(names, calls):
+        msgs.append({"role": "assistant", "content": f"PROGRESS: p\nSTALE: {names}"})
+        obs = [{"role": "tool", "content": "<returncode>0</returncode>\n<output>\nx\n</output>"}
+               for _ in range(calls)]
+        msgs.extend(obs)
+        engine.observe(["true"] * calls, obs)
+
+    for _ in range(4):
+        reply("-", 1)  # steps 0-3
+    reply("0, 1, 2, 3, 4, 5", 4)  # steps 4-7
+    assert engine.stale == stale and engine.labels["stale_out_of_window"] == out
+
+
 def test_a_fold_removes_reply_and_output_and_leaves_a_note(corpus):
     script = [read(0), read(1), read(2), ("PROGRESS: done with the reads\nSTALE: 1, 2", "echo x"), *filler(6)]
     agent = run(script, corpus)
@@ -130,6 +152,41 @@ def test_a_fold_removes_reply_and_output_and_leaves_a_note(corpus):
     assert note.startswith("[context-manager] steps 1-2 folded: read module 1 · read module 2. "
                            "`restore 1-2` shows them again.\n  mod01.py: def mod01_op_0(value):")
     assert note.index("steps 1-2 folded") < note.index("[step 3]")
+
+
+def two_reads(a, b, stale="-"):
+    return (f"PROGRESS: read modules {a} and {b}\nSTALE: {stale}", [f"cat mod{a:02d}.py", f"cat mod{b:02d}.py"])
+
+
+def calls_of(prompt, progress):
+    """The tool-call ids of the rendered reply carrying `progress`, or None if it left."""
+    return next(([tc["id"] for tc in m["tool_calls"]] for m in prompt
+                 if m["role"] == "assistant" and progress in (m.get("content") or "")), None)
+
+
+def test_a_partly_folded_reply_keeps_only_the_calls_whose_output_stays(corpus):
+    # steps 1 and 2 are one reply's two tool calls (call_2_0, call_2_1); only step 1 is named stale
+    script = [read(0), two_reads(1, 2), ("PROGRESS: done with module 1\nSTALE: 1", "echo x"), *filler(8)]
+    agent = run(script, corpus)
+    assert agent.stale == {1} and [(f.start, f.end) for f in agent.engine.folds] == [(1, 1)]
+    for p in agent.model.prompts:
+        assert_every_tool_call_answered(p)
+    p = agent.model.prompts[-1]
+    assert tool_msg(p, 1) is None and calls_of(p, "read modules 1 and 2") == ["call_2_1"]
+    note = tool_msg(p, 2)  # the note goes on the next kept step, here the reply's other call
+    assert note.startswith("[context-manager] step 1 folded: read modules 1 and 2. `restore 1` shows it again.")
+    assert note.index("step 1 folded") < note.index("[step 2]")
+    assert calls_of(agent.messages, "read modules 1 and 2") == ["call_2_0", "call_2_1"]  # the history keeps both
+
+
+def test_a_reply_whose_calls_all_fold_leaves_with_them(corpus):
+    script = [read(0), two_reads(1, 2), ("PROGRESS: done with modules 1 and 2\nSTALE: 1, 2", "echo x"), *filler(8)]
+    agent = run(script, corpus)
+    assert [(f.start, f.end) for f in agent.engine.folds] == [(1, 2)]
+    p = agent.model.prompts[-1]
+    assert_every_tool_call_answered(p)
+    assert tool_msg(p, 1) is None and tool_msg(p, 2) is None and calls_of(p, "read modules 1 and 2") is None
+    assert tool_msg(p, 3).startswith("[context-manager] steps 1-2 folded: read modules 1 and 2 · read modules 1 and 2.")
 
 
 # --------------------------------------------------------------- reversibility
