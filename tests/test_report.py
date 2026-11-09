@@ -76,3 +76,12 @@ def test_the_cli_prints_a_table_and_writes_the_per_task_record(cell, tmp_path, c
     assert out.startswith("| cell | N | Resolve |") and "| 50.0 |" in out
     assert [r["task"] for r in csv.DictReader((tmp_path / "t.csv").open())] == ["a", "b"]
     assert len(list(csv.DictReader((tmp_path / "c.csv").open()))) == 4
+
+
+def test_a_task_without_a_test_verdict_reports_as_unresolved(cell):
+    # Terminal-Bench writes resolved: null and a verifier_error reason to results.json
+    (cell / "resolved.json").unlink()
+    (cell / "results.json").write_text(json.dumps({
+        "a": {"resolved": True}, "b": {"resolved": None, "verifier_error": "no reward file"}}))
+    row, tasks, _ = cell_report(cell)
+    assert row["Resolve"] == 1 and [t["resolved"] for t in tasks] == [1, 0]

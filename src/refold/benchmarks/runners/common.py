@@ -26,6 +26,16 @@ def merge_config(config_spec: list[str], model: str | None, model_class: str | N
     return recursive_merge(*configs)
 
 
+def merge_env(user: dict, flavor: dict) -> dict:
+    """The user's environment config (`-c environment.…`) with a benchmark flavor's
+    overrides. Docker `run_args` are joined, the flavor's first, so a user flag comes later
+    and wins; replacing them would silently drop a user's volume, `-e` or `--network`."""
+    merged = {**user, **flavor}
+    if flavor.get("run_args") and user.get("run_args"):
+        merged["run_args"] = [*flavor["run_args"], *user["run_args"]]
+    return merged
+
+
 def stop_when_container_gone(agent_class: type) -> type:
     """The agent class, ending the task once its container is gone: the container outlived
     environment.container_timeout and was removed, so every further command fails."""

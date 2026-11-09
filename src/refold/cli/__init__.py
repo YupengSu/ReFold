@@ -58,10 +58,18 @@ def _score(cell: Path, benchmark: str | None) -> int:
     plan = cell / "plan.json"
     name = benchmark or (json.loads(plan.read_text()).get("benchmark") if plan.is_file() else None) or "swebench"
     r = get_benchmark(name).score(cell)
+    none, warned = sorted(r.verifier_error_ids), sorted(r.verifier_warning_ids)
     (cell / "resolved.json").write_text(json.dumps(
         {"benchmark": name, "submitted": r.submitted, "n_resolved": r.resolved, "resolved": sorted(r.resolved_ids),
+         "n_verifier_error": r.verifier_error, "verifier_error": none,
+         "n_verifier_warning": r.verifier_warning, "verifier_warning": warned,
          "report": str(r.report_path) if r.report_path else None}, indent=1))
-    print(f"resolved {r.resolved} / {r.submitted}" + (f" ({r.empty_patch} empty patches)" if r.empty_patch else ""))
+    print(f"resolved {r.resolved} / {r.submitted}" + (f" ({r.empty_patch} empty patches)" if r.empty_patch else "")
+          + (f" ({r.verifier_error} verifier errors)" if r.verifier_error else ""))
+    if none:  # tb run counts them as unresolved, as above; Harbor leaves them out of the mean
+        print(f"verifier errors (without them: {r.resolved} / {r.submitted - len(none)}): {', '.join(none)}")
+    if warned:  # counted as unresolved, as Harbor does
+        print(f"reward 0 without a pytest summary, tests may not have run: {', '.join(warned)}")
     if r.report_path:
         print(f"report: {r.report_path}")
     return 0

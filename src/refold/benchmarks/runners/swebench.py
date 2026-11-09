@@ -21,7 +21,7 @@ import typer
 from minisweagent.utils.log import add_file_handler, logger
 
 from refold.benchmarks.base import HF_DATASETS, load_hf
-from refold.benchmarks.runners.common import merge_config, run_batch, with_progress
+from refold.benchmarks.runners.common import merge_config, merge_env, run_batch, with_progress
 from refold.registry import import_class
 
 app = typer.Typer(rich_markup_mode="rich", add_completion=False)
@@ -87,7 +87,7 @@ def main(
     def get_environment(cfg: dict, instance: dict):
         # A copy per instance: upstream writes the image into config["environment"], and the
         # config is shared by every worker thread.
-        cfg = {**cfg, "environment": {**(cfg.get("environment") or {}), **env_of[instance["instance_id"]]}}
+        cfg = {**cfg, "environment": merge_env(cfg.get("environment") or {}, env_of[instance["instance_id"]])}
         return base_env(cfg, instance)
 
     _sw.get_sb_environment = get_environment

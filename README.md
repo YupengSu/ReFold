@@ -23,6 +23,7 @@
 
 - **2026-11**: Fixed two bugs with parallel tool calls ([#1](https://github.com/YupengSu/ReFold/issues/1)).
 - **2026-11**: Fixed two bugs in reading a reply's PROGRESS and STALE lines ([#3](https://github.com/YupengSu/ReFold/issues/3)).
+- **2026-11**: Terminal-Bench is scored by the rules of its official harnesses ([#4](https://github.com/YupengSu/ReFold/issues/4)).
 
 ## Overview
 
