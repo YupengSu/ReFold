@@ -13,8 +13,9 @@ from minisweagent.models.litellm_model import LitellmModel
 
 class ScriptedModel(LitellmModel):
     """Replays `script`, a list of (reply content, command[, extra tool args]), and keeps
-    every prompt it was sent. A real LitellmModel underneath, so observations are
-    formatted by upstream's own templates."""
+    every prompt it was sent; a list of commands issues them as parallel tool calls of one
+    reply. A real LitellmModel underneath, so observations are formatted by upstream's own
+    templates."""
 
     def __init__(self, script):
         super().__init__(model_name="scripted/test", cost_tracking="ignore_errors")
@@ -37,11 +38,14 @@ class ScriptedModel(LitellmModel):
         self.prompts.append(json.loads(json.dumps(messages)))
         step = self.script[min(len(self.prompts) - 1, len(self.script) - 1)]
         content, command, extra_args = (*step, {})[:3]
-        cid = f"call_{len(self.prompts)}"
+        commands = command if isinstance(command, list) else [command]
+        cids = [f"call_{len(self.prompts)}" + (f"_{j}" if len(commands) > 1 else "") for j in range(len(commands))]
         return {"role": "assistant", "content": content,
                 "tool_calls": [{"id": cid, "type": "function",
-                                "function": {"name": "bash", "arguments": json.dumps({"command": command, **extra_args})}}],
-                "extra": {"actions": [{"command": command, "tool_call_id": cid}], "cost": 0.0}}
+                                "function": {"name": "bash", "arguments": json.dumps({"command": c, **extra_args})}}
+                               for cid, c in zip(cids, commands)],
+                "extra": {"actions": [{"command": c, "tool_call_id": cid} for cid, c in zip(cids, commands)],
+                          "cost": 0.0}}
 
 
 TEMPLATES = {
@@ -49,6 +53,15 @@ TEMPLATES = {
     "instance_template": "Task: {{task}}\n1. Include a THOUGHT section explaining your reasoning and what "
                          "you're trying to accomplish\n2. Provide a bash tool call",
 }
+
+
+def assert_every_tool_call_answered(prompt: list[dict]) -> None:
+    """Every tool call of every reply has its tool message, and no tool message lacks its
+    call (strict chat APIs such as Anthropic's and DeepSeek's answer HTTP 400 otherwise)."""
+    calls = {tc["id"] for m in prompt for tc in m.get("tool_calls") or []}
+    answered = {m["tool_call_id"] for m in prompt if m.get("role") == "tool"}
+    assert calls <= answered, f"tool calls without their tool message: {sorted(calls - answered)}"
+    assert answered <= calls, f"tool messages without their call: {sorted(answered - calls)}"
 
 
 def make_agent(agent_cls, script, cwd, **cfg):

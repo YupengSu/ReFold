@@ -86,7 +86,15 @@ class ReFoldAgent(RenderingAgent):
         return self.engine.base_folded_steps()
 
     def render(self) -> list[dict]:
-        return self.engine.render()
+        """The engine's render, with each kept reply's `tool_calls` trimmed to the calls whose
+        tool message stays. A reply stays while any of its steps does; the call of a folded
+        step leaves with its output, so every tool call the model sees has its answer, which
+        strict chat APIs require."""
+        msgs = self.engine.render()
+        kept = {m.get("tool_call_id") for m in msgs if m.get("role") == "tool"}
+        return [{**m, "tool_calls": [tc for tc in m["tool_calls"] if tc["id"] in kept]}
+                if m.get("tool_calls") and any(tc["id"] not in kept for tc in m["tool_calls"]) else m
+                for m in msgs]
 
     # ------------------------------------------------------------------ record
     def serialize(self, *extra_dicts) -> dict:
