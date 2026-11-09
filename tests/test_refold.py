@@ -140,6 +140,19 @@ def test_a_reply_with_several_calls_names_the_steps_before_its_first_call(tmp_pa
     assert engine.stale == stale and engine.labels["stale_out_of_window"] == out
 
 
+def test_labels_written_into_the_command_are_read_and_not_run(corpus):
+    # Some models put the two lines at the start of the bash command instead of the reply.
+    script = [read(0), read(1), read(2), ("", "PROGRESS: done with 1 and 2\nSTALE: 1-2\necho x"),
+              ("", "PROGRESS: only labels\nSTALE: -"), *filler(5)]
+    agent = run(script, corpus)
+    assert agent.stale == {1, 2} and agent.progress[3:5] == ["done with 1 and 2", "only labels"]
+    assert agent.labels["labels_in_command"] == 2 and agent.labels["progress_missing"] == 0
+    ran, labels_only = (agent.messages[agent.tool_msg[s]]["content"] for s in (3, 4))
+    assert "<output>\nx\n</output>" in ran and "not found" not in ran
+    assert "not found" in labels_only  # nothing else to run: the shell's error says so
+    assert agent.messages[agent.reply_msg[3]]["extra"]["actions"][0]["command"].startswith("PROGRESS:")
+
+
 def test_a_fold_removes_reply_and_output_and_leaves_a_note(corpus):
     script = [read(0), read(1), read(2), ("PROGRESS: done with the reads\nSTALE: 1, 2", "echo x"), *filler(6)]
     agent = run(script, corpus)

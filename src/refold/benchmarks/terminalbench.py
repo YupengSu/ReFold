@@ -47,7 +47,10 @@ class _TerminalBench:
             raise FileNotFoundError(f"{rf} not found: Terminal-Bench is scored in-run, so the cell did not run")
         d = json.loads(rf.read_text())
         ok = tuple(k for k, v in d.items() if v.get("resolved"))
-        return ScoreReport(submitted=len(d), resolved=len(ok), resolved_ids=ok, report_path=rf)
+        none = tuple(k for k, v in d.items() if v.get("resolved", False) is None)
+        warned = tuple(k for k, v in d.items() if v.get("verifier_warning"))
+        return ScoreReport(submitted=len(d), resolved=len(ok), resolved_ids=ok, report_path=rf,
+                           verifier_error_ids=none, verifier_warning_ids=warned)
 
 
 @register_benchmark("tbench1")

@@ -22,12 +22,8 @@
 ## Updates
 
 - **2026-11**: Fixed two bugs with parallel tool calls ([#1](https://github.com/YupengSu/ReFold/issues/1)).
-  - When a fold covered only some of the calls of one reply, the prompt kept all of the reply's
-    calls but dropped the folded ones' outputs, and strict chat APIs rejected it with HTTP 400. A
-    kept reply now lists only the calls whose output stays in the prompt.
-  - The STALE window of a reply with several calls ended at its last call instead of before its
-    first one, so the reply could name its own calls but not the latest steps the model had seen.
-  - Replies with a single tool call render exactly as before.
+- **2026-11**: Fixed two bugs in reading a reply's PROGRESS and STALE lines ([#3](https://github.com/YupengSu/ReFold/issues/3)).
+- **2026-11**: Terminal-Bench is scored by the rules of its official harnesses ([#4](https://github.com/YupengSu/ReFold/issues/4)).
 
 ## Overview
 

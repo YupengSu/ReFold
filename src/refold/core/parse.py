@@ -348,8 +348,17 @@ def parse_restore_command(cmd: str) -> list[int] | None:
     m = _RESTORE_RE.fullmatch(cmd.strip()) if cmd else None
     if m is None:
         return None
+    return _step_ids(m.group(1))
+
+
+_STEP_IDS_RE = re.compile(r"(\d+)\s*[-–]\s*(\d+)|(\d+)")
+
+
+def _step_ids(text: str) -> list[int]:
+    """The step ids in `3, 9`, `3-5` or `25-26, 28-31`, in order and without repeats. A
+    range names every step in it (at most 500)."""
     ids: list[int] = []
-    for lo, hi, one in re.findall(r"(\d+)\s*-\s*(\d+)|(\d+)", m.group(1)):
+    for lo, hi, one in _STEP_IDS_RE.findall(text):
         for u in [int(one)] if one else range(int(lo), min(int(hi), int(lo) + 500) + 1):
             if u not in ids:
                 ids.append(u)
@@ -370,13 +379,30 @@ def parse_progress(content: str | None) -> str | None:
 
 
 def parse_stale(content: str | None, max_lines: int = 4) -> list[int]:
-    """STALE_t: step ids on a `STALE:` line among the first `max_lines` non-empty lines.
+    """STALE_t: step ids on a `STALE:` line among the first `max_lines` non-empty lines. A
+    range such as `25-28` names every step in it, not only its two ends.
 
     Only the top of the reply is scanned, where the metadata lives, so a "stale" in the
     reasoning cannot match. `-`, `none`, `[]` and `n/a` mean nothing is named.
     """
     body = _metadata_line(content, "STALE", max_lines)
-    return [int(x) for x in re.findall(r"\d+", body)] if body else []
+    return _step_ids(body) if body else []
+
+
+_LABEL_LINE_RE = re.compile(r"\s*`?(PROGRESS|STALE)`?\s*[:\-–]")
+
+
+def split_labels(cmd: str) -> tuple[str, str]:
+    """(labels, rest): the PROGRESS/STALE lines a model put at the start of a command
+    instead of its reply, and the command after them. Left in, the shell runs each as a
+    command (`PROGRESS:: command not found`). Upper case only, as the protocol writes them:
+    `progress` is a real tool. A command that starts with neither gives ("", cmd)."""
+    lines = cmd.splitlines(keepends=True)
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or _LABEL_LINE_RE.match(lines[i])):
+        i += 1
+    labels = "".join(line for line in lines[:i] if line.strip()).rstrip("\n")
+    return (labels, "".join(lines[i:])) if labels else ("", cmd)
 
 
 def _metadata_line(content: str | None, key: str, max_lines: int) -> str:

@@ -58,8 +58,10 @@ class ReFoldAgent(RenderingAgent):
     # ------------------------------------------------------------------ OBSERVE
     def execute_actions(self, message: dict) -> list[dict]:
         """Run the reply's commands -- `restore <step>` is answered from the history, not the
-        shell -- then OBSERVE the turn."""
-        actions = (message.get("extra") or {}).get("actions") or []
+        shell -- then OBSERVE the turn. PROGRESS/STALE lines at the start of a command are
+        taken out before it runs and read as the reply's labels; the history keeps the reply
+        as the model wrote it."""
+        labels, actions = _split_labels((message.get("extra") or {}).get("actions") or [])
         restores = [parse.parse_restore_command(_unwrap(a.get("command", ""))) if self.config.reversible else None
                     for a in actions]
         outputs = [self.env.execute(a) if steps is None else {"output": "", "returncode": 0, "exception_info": ""}
@@ -69,11 +71,11 @@ class ReFoldAgent(RenderingAgent):
             if steps is not None:  # the logged turn in place of the shell frame, not wrapped in a second one
                 obs["content"] = self.restore(steps)
         added = self.add_messages(*observations)
-        self.observe([_unwrap(a.get("command", "")) for a in actions], observations)
+        self.observe([_unwrap(a.get("command", "")) for a in actions], observations, labels)
         return added
 
-    def observe(self, commands: list[str], observations: list[dict]) -> None:
-        self.engine.observe(commands, observations)
+    def observe(self, commands: list[str], observations: list[dict], labels: str = "") -> None:
+        self.engine.observe(commands, observations, labels)
 
     def restore(self, steps: list[int]) -> str:
         return self.engine.restore(steps)
@@ -99,6 +101,22 @@ class ReFoldAgent(RenderingAgent):
     # ------------------------------------------------------------------ record
     def serialize(self, *extra_dicts) -> dict:
         return super().serialize({"info": {"refold": self.engine.record()}}, *extra_dicts)
+
+
+def _split_labels(actions: list[dict]) -> tuple[str, list[dict]]:
+    """The PROGRESS/STALE lines at the start of the actions' commands, and the actions with
+    them taken out. A command that is nothing but labels runs as it is, so the model sees
+    from the shell's error that it issued no command."""
+    found, out = [], []
+    for a in actions:
+        cmd = a.get("command")
+        labels, rest = parse.split_labels(cmd) if isinstance(cmd, str) else ("", "")
+        if labels:
+            found.append(labels)
+            if rest.strip():
+                a = {**a, "command": rest}
+        out.append(a)
+    return "\n".join(found), out
 
 
 def _unwrap(cmd: Any) -> str:

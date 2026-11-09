@@ -47,6 +47,21 @@ class ScoreReport:
     empty_patch: int = 0
     resolved_ids: tuple[str, ...] = ()
     report_path: Path | None = None
+    verifier_error_ids: tuple[str, ...] = ()
+    """Terminal-Bench: tasks whose tests gave no verdict (resolved None), counted in
+    `submitted` as unresolved (tb run's rule); Harbor leaves them out of the mean."""
+
+    verifier_warning_ids: tuple[str, ...] = ()
+    """Terminal-Bench 2.1: tasks scored unresolved by a reward of 0 although pytest printed no
+    short test summary, so the tests may not have run. Counted as unresolved, as in Harbor."""
+
+    @property
+    def verifier_error(self) -> int:
+        return len(self.verifier_error_ids)
+
+    @property
+    def verifier_warning(self) -> int:
+        return len(self.verifier_warning_ids)
 
     @property
     def rate(self) -> float:

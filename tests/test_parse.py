@@ -66,6 +66,20 @@ def test_stale_ids_come_only_from_the_first_lines():
     assert parse.parse_stale("a\nb\nc\nd\nSTALE: 3") == []  # past the metadata lines
 
 
+def test_a_stale_range_names_every_step_in_it():
+    assert parse.parse_stale("PROGRESS: x\nSTALE: 25-26, 28-31") == [25, 26, 28, 29, 30, 31]
+    assert parse.parse_stale("STALE: 3–5") == [3, 4, 5]  # en dash
+    assert parse.parse_stale("STALE: 3 - 5, 4, 9") == [3, 4, 5, 9]
+
+
+def test_labels_at_the_start_of_a_command_are_split_off():
+    assert parse.split_labels("PROGRESS: read a\nSTALE: 1-2\ncat a.py") == ("PROGRESS: read a\nSTALE: 1-2", "cat a.py")
+    assert parse.split_labels("\nPROGRESS: x\n\necho hi\n") == ("PROGRESS: x", "echo hi\n")
+    assert parse.split_labels("PROGRESS: x\nSTALE: -") == ("PROGRESS: x\nSTALE: -", "")
+    for cmd in ("cat a.py", "progress -m", "cat a.py\nPROGRESS: x", "echo PROGRESS: x"):
+        assert parse.split_labels(cmd) == ("", cmd), cmd
+
+
 def test_restore_is_recognised_only_as_the_whole_command():
     assert parse.parse_restore_command("restore 12") == [12]
     assert parse.parse_restore_command("  restore 3-5, 9 ") == [3, 4, 5, 9]
