@@ -86,6 +86,20 @@ def test_between_advances_the_prompt_only_grows_at_the_end(corpus):
     assert "[context-manager]" in text(prompts[-1]) and checked >= 8
 
 
+def test_a_missed_header_keeps_its_reminder_so_the_prefix_holds(corpus):
+    """The reminder stays on the observation it was appended to: dropping it once the
+    model complies would edit a message the previous prompt already holds."""
+    script = [read(0), ("no header", "echo a"), ("still none", "echo b"), read(1), read(2), ("none", "echo c"),
+              read(3), read(0), read(1)]
+    agent = run(script, corpus)
+    prompts, k = agent.model.prompts, 3
+    for t in range(1, len(prompts)):
+        if max(0, k * ((t - 1 - k) // k)) == max(0, k * ((t - k) // k)):
+            assert prompts[t][:len(prompts[t - 1])] == prompts[t - 1], f"prefix broken at call {t}"
+    last = text(prompts[-1])
+    assert last.count(PROMPTS["remind_gentle"]) == 2 and PROMPTS["remind_harsh"].format(misses=2) in last
+
+
 def test_a_repeat_of_a_stubbed_range_renders_full_and_stays_full(corpus):
     agent = run([read(0), read(0), read(0), *filler(9)], corpus)
     last = agent.model.prompts[-1]

@@ -126,6 +126,7 @@ class ReFoldEngine:
         self.agent_stale: set[int] = set()  # what the replies named, when stale_source is not `agent`
         self.folds: list[fold.Fold] = []
         self.removed: dict[int, str] = {}  # step -> "folded" | "compressed" (deduplicated) in the last prompt
+        self.reminders: dict[int, str] = {}  # msg index -> the format reminder appended to it, for good
         self.cwd: str = cwd
         self.labels = {"replies": 0, "progress_missing": 0, "stale_out_of_window": 0, "labels_in_command": 0}
         self.restores = dict.fromkeys(("calls", "folded", "compressed", "shown", "invalid"), 0)
@@ -157,6 +158,8 @@ class ReFoldEngine:
         while len(self.progress) < t:  # every turn of this reply shares its PROGRESS
             self.progress.append(progress or "")
             self.has_progress.append(progress is not None)
+        if progress is None:
+            self.reminders[self.tool_msg[-1]] = self._reminder()
         w = self.config.chunk_size if self.config.stale_window is None else self.config.stale_window
         first = t - len(commands)  # this reply's first step; its own steps have no output yet
         lo, hi = (0 if w == 0 else first - w), first - 1  # the last w steps before this reply
@@ -276,7 +279,6 @@ class ReFoldEngine:
             steps_of_reply.setdefault(r, set()).add(s)
         skip_msgs |= {r for r, steps in steps_of_reply.items() if steps <= folded}  # the reply goes too
         notes = self._fold_notes(folded)
-        remind_at, remind = self._reminder()
 
         out: list[dict] = []
         for i, msg in enumerate(messages):
@@ -292,8 +294,8 @@ class ReFoldEngine:
                     content = f"[step {s}]\n{content}"
             if i in notes:
                 content = f"{notes[i]}\n{content}"
-            if i == remind_at and isinstance(content, str):
-                content = f"{content}\n\n{remind}"
+            if i in self.reminders and isinstance(content, str):
+                content = f"{content}\n\n{self.reminders[i]}"
             out.append({**msg, "content": content} if content is not orig else dict(msg))
         return out
 
@@ -313,14 +315,12 @@ class ReFoldEngine:
             notes[idx] = f"{notes[idx]}\n{f.note}" if idx in notes else f.note
         return notes
 
-    def _reminder(self) -> tuple[int, str]:
-        """(msg index, text) of the format reminder appended to the newest observation when
-        the last reply skipped its PROGRESS line; firmer after repeated misses."""
-        if not self.has_progress or self.has_progress[-1]:
-            return -1, ""
+    def _reminder(self) -> str:
+        """The format reminder for a reply that skipped its PROGRESS line, firmer after
+        repeated misses. It goes on the reply's last observation and stays there: taking it
+        off once the model complies would edit a message the cached prefix holds."""
         misses = len(self.has_progress) - 1 - max((i for i, ok in enumerate(self.has_progress) if ok), default=-1)
-        text = PROMPTS["remind_gentle"] if misses <= 1 else PROMPTS["remind_harsh"].format(misses=misses)
-        return self.tool_msg[-1], text
+        return PROMPTS["remind_gentle"] if misses <= 1 else PROMPTS["remind_harsh"].format(misses=misses)
 
     # ------------------------------------------------------------------ record
     def record(self) -> dict:
