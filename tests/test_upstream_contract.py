@@ -3,7 +3,8 @@
 The dependency is a pinned release, not a vendored copy, which is only safe while the
 surface is small and checked. Two names are private and pinned harder, by signature:
 compaction calls `LitellmModel._query` and `_calculate_cost`, because every reported
-compaction number came from that call.
+compaction number came from that call. StreamingLitellmModel overrides `_query`, so
+`query()` must still send through it.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ def test_the_symbols_we_use_are_importable():
     from minisweagent.environments.docker import DockerEnvironment  # noqa: F401
     from minisweagent.exceptions import FormatError, LimitsExceeded  # noqa: F401
     from minisweagent.models.litellm_model import LitellmModel, LitellmModelConfig  # noqa: F401
+    from minisweagent.models.utils.actions_toolcall import BASH_TOOL  # noqa: F401
     from minisweagent.run.benchmarks.swebench import (  # noqa: F401
         ProgressTrackingAgent,
         filter_instances,
@@ -58,6 +60,12 @@ def test_the_private_methods_compaction_needs_keep_their_shape(name, params, kwa
     assert all(p in sig.parameters for p in params)
     if kwargs:  # max_tokens rides **kwargs; without it every summary is uncapped
         assert any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+
+def test_query_still_sends_through_private_query_so_streaming_can_replace_it():
+    from minisweagent.models.litellm_model import LitellmModel
+
+    assert "self._query(self._prepare_messages_for_api(messages)" in inspect.getsource(LitellmModel.query)
 
 
 def test_only_the_summariser_calls_a_private_upstream_method():

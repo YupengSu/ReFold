@@ -45,6 +45,41 @@ def test_local_serving_is_a_model_string_and_a_base():
     assert build_config("refold", "deepseek/deepseek-chat")["model_kwargs"] == {}
 
 
+def test_a_claude_model_runs_as_agentic_coding_uses_it():
+    """Adaptive thinking at medium effort, the reply ceiling of every cell, streamed, with cache breakpoints."""
+    for name in ("base", "compact", "refold"):
+        cfg = build_config(name, "anthropic/claude-opus-4-8")
+        assert cfg["agent"].get("cache_breakpoints") is True
+        assert cfg["model_kwargs"] == {"reasoning_effort": "medium"}
+        assert cfg["model_class"] == "refold.models.StreamingLitellmModel"
+    off = build_config("refold", "anthropic/claude-opus-4-8", overrides=["cache_breakpoints=false"],
+                       model_class="litellm")
+    assert off["agent"]["cache_breakpoints"] is False and off["model_class"] == "litellm"  # explicit choices win
+    for other in (build_config("refold", "Qwen/Qwen3.6-27B", api_base="http://h:1/v1"),
+                  build_config("refold", "deepseek/deepseek-chat")):
+        assert "cache_breakpoints" not in other["agent"] and other["model_class"] is None
+
+
+def test_a_model_with_preserved_thinking_drops_the_blocks_an_edit_invalidates(tmp_path):
+    from minisweagent.config import get_config_from_spec
+
+    cfg = build_config("refold", "anthropic/claude-opus-5-5")
+    assert cfg["model_kwargs"]["thinking"] == {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    assert cfg["model_kwargs"]["extra_headers"] == {"anthropic-beta": "thinking-binding-controls-2026-08-01"}
+    assert "thinking" not in build_config("refold", "anthropic/claude-opus-4-8")["model_kwargs"]  # no such check there
+    cmd = build_command(["a"], cfg, tmp_path, 1, _Bench())
+    spec = next(cmd[i + 1] for i, c in enumerate(cmd) if c == "-c" and cmd[i + 1].startswith("model.model_kwargs.thinking="))
+    assert get_config_from_spec(spec)["model"]["model_kwargs"]["thinking"] == cfg["model_kwargs"]["thinking"]  # JSON, read back whole
+
+
+def test_a_claude_override_comes_after_the_defaults(tmp_path):
+    cfg = build_config("refold", "anthropic/claude-opus-4-8", overrides=["model.model_kwargs.reasoning_effort=high"])
+    cmd = build_command(["a"], cfg, tmp_path, 1, _Bench())
+    specs = [cmd[i + 1] for i, c in enumerate(cmd) if c == "-c"]
+    assert "model.model_kwargs.max_tokens=16384" in specs
+    assert specs.index("model.model_kwargs.reasoning_effort=high") > specs.index("model.model_kwargs.reasoning_effort=medium")
+
+
 def test_knobs_are_coerced_and_checked_against_the_arm():
     cfg = build_config("refold", "m",
                        overrides=["chunk_size=5", "agent.fold=false", "environment.container_timeout=6h"])

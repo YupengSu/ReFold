@@ -127,6 +127,7 @@ class ReFoldEngine:
         self.folds: list[fold.Fold] = []
         self.removed: dict[int, str] = {}  # step -> "folded" | "compressed" (deduplicated) in the last prompt
         self.reminders: dict[int, str] = {}  # msg index -> the format reminder appended to it, for good
+        self.rendered_from: list[int] = []  # the last prompt's messages -> their history indices
         self.cwd: str = cwd
         self.labels = {"replies": 0, "progress_missing": 0, "stale_out_of_window": 0, "labels_in_command": 0}
         self.restores = dict.fromkeys(("calls", "folded", "compressed", "shown", "invalid"), 0)
@@ -262,6 +263,7 @@ class ReFoldEngine:
         Between boundary advances it is the previous prompt plus the new messages."""
         messages = self.messages
         if not self.turns:
+            self.rendered_from = list(range(len(messages)))
             return [dict(m) for m in messages]
         folded = self.folded_steps()
         if self.config.dedup:
@@ -281,6 +283,7 @@ class ReFoldEngine:
         notes = self._fold_notes(folded)
 
         out: list[dict] = []
+        self.rendered_from = []
         for i, msg in enumerate(messages):
             if i in skip_msgs:
                 continue
@@ -297,6 +300,7 @@ class ReFoldEngine:
             if i in self.reminders and isinstance(content, str):
                 content = f"{content}\n\n{self.reminders[i]}"
             out.append({**msg, "content": content} if content is not orig else dict(msg))
+            self.rendered_from.append(i)
         return out
 
     def _fold_notes(self, folded: set[int]) -> dict[int, str]:
