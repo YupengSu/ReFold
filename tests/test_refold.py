@@ -86,6 +86,59 @@ def test_between_advances_the_prompt_only_grows_at_the_end(corpus):
     assert "[context-manager]" in text(prompts[-1]) and checked >= 8
 
 
+def unmarked(prompt):
+    """The prompt without its cache breakpoints, which are not part of the cached bytes."""
+    out = []
+    for m in prompt:
+        m = {k: v for k, v in m.items() if k != "cache_control"}
+        if isinstance(m.get("content"), list):
+            m["content"] = "".join(b["text"] for b in m["content"])
+        out.append(m)
+    return out
+
+
+def test_a_missed_header_keeps_its_reminder_so_the_prefix_holds(corpus):
+    """The reminder stays on the observation it was appended to: dropping it once the
+    model complies would edit a message the previous prompt already holds."""
+    script = [read(0), ("no header", "echo a"), ("still none", "echo b"), read(1), read(2), ("none", "echo c"),
+              read(3), read(0), read(1)]
+    agent = run(script, corpus)
+    prompts, k = agent.model.prompts, 3
+    for t in range(1, len(prompts)):
+        if max(0, k * ((t - 1 - k) // k)) == max(0, k * ((t - k) // k)):
+            assert prompts[t][:len(prompts[t - 1])] == prompts[t - 1], f"prefix broken at call {t}"
+    last = text(prompts[-1])
+    assert last.count(PROMPTS["remind_gentle"]) == 2 and PROMPTS["remind_harsh"].format(misses=2) in last
+
+
+def test_cache_breakpoints_sit_where_the_next_prompt_reads_them_back(corpus):
+    """With cache_breakpoints, a prompt marks at most four messages: the task, the newest,
+    and the last one before the boundary, for this prompt's boundary and the previous one.
+    At an advance the previous boundary's mark is unchanged, so the cache is read back
+    there instead of from the task."""
+    script = [(f"PROGRESS: r{i}\nSTALE: {i - 1 if i % 2 else '-'}", f"cat mod{i % 4:02d}.py") for i in range(16)]
+    agent = run(script, corpus, cache_breakpoints=True)
+    prompts = agent.model.prompts
+
+    def marks(p):
+        return [i for i, m in enumerate(p) if "cache_control" in m
+                or (isinstance(m.get("content"), list) and "cache_control" in m["content"][-1])]
+
+    past_task = 0
+    for t in range(1, len(prompts)):
+        prev, cur = unmarked(prompts[t - 1]), unmarked(prompts[t])
+        mk = marks(prompts[t])
+        assert len(mk) <= 4 and mk[-1] == len(prompts[t]) - 1 and mk[0] == 1  # the task, the newest
+        if prev != cur[:len(prev)]:  # an advance rewrote part of the prompt
+            stable = max(a for a in marks(prompts[t - 1]) if prev[:a + 1] == cur[:a + 1])
+            assert stable in mk, f"call {t} marks no point the previous prompt cached"
+            past_task += stable > 1  # the first advance (from b = 0) reads back from the task
+    assert past_task >= 2
+    assert prompts[-1][-1]["cache_control"] == {"type": "ephemeral"}  # a tool message: marked on itself
+    assert prompts[-1][1]["content"][0]["cache_control"] == {"type": "ephemeral"}  # the task: on its text
+    assert not any("cache_control" in m for m in agent.messages)  # the history is not edited
+
+
 def test_a_repeat_of_a_stubbed_range_renders_full_and_stays_full(corpus):
     agent = run([read(0), read(0), read(0), *filler(9)], corpus)
     last = agent.model.prompts[-1]

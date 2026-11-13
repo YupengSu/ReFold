@@ -23,9 +23,7 @@ from __future__ import annotations
 
 import json
 
-from minisweagent.agents.default import AgentConfig
-
-from refold.agent import RenderingAgent
+from refold.agent import RenderingAgent, RenderingConfig
 from refold.registry import StrategySpec, register_strategy
 from refold.strategies.refold.agent import ReFoldAgent, ReFoldConfig
 
@@ -38,7 +36,7 @@ SUMMARY_PROMPT = (
 )
 
 
-class CompactConfig(AgentConfig):
+class CompactConfig(RenderingConfig):
     context_budget: int = 245_760
     """B, usable context in tokens (the served window minus the 16,384-token reply)."""
     trigger_ratio: float = 0.75

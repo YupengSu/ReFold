@@ -11,16 +11,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from minisweagent.agents.default import AgentConfig
-
-from refold.agent import RenderingAgent
+from refold.agent import RenderingAgent, RenderingConfig
 from refold.core import parse
 from refold.core.engine import PROMPTS, ReFoldEngine, ReFoldKnobs, inject_prompts
 
 __all__ = ["PROMPTS", "ReFoldAgent", "ReFoldConfig"]
 
 
-class ReFoldConfig(AgentConfig, ReFoldKnobs):
+class ReFoldConfig(RenderingConfig, ReFoldKnobs):
     """mini-swe-agent's agent config plus ReFold's knobs (refold.core.engine.ReFoldKnobs)."""
 
 
@@ -41,6 +39,8 @@ class ReFoldAgent(RenderingAgent):
             self.config.system_template, self.config.instance_template, self.config)
         self.engine = ReFoldEngine(self.config, lambda: self.messages, cwd=self._cwd())
         self.engine.folded_steps = self.folded_steps  # a subclass may widen it (compact + ReFold)
+        self._marked_boundary = 0  # the boundary the last cache breakpoints were placed for
+        self._history_of: dict[int, int] = {}  # id of a rendered message -> its history index
 
     for _name in _ENGINE_STATE:
         locals()[_name] = _engine_attr(_name)
@@ -53,6 +53,7 @@ class ReFoldAgent(RenderingAgent):
 
     def run(self, task: str = "", **kwargs: Any) -> dict:
         self.engine.reset(self._cwd())
+        self._marked_boundary, self._history_of = 0, {}
         return super().run(task=task, **kwargs)
 
     # ------------------------------------------------------------------ OBSERVE
@@ -94,9 +95,29 @@ class ReFoldAgent(RenderingAgent):
         strict chat APIs require."""
         msgs = self.engine.render()
         kept = {m.get("tool_call_id") for m in msgs if m.get("role") == "tool"}
-        return [{**m, "tool_calls": [tc for tc in m["tool_calls"] if tc["id"] in kept]}
-                if m.get("tool_calls") and any(tc["id"] not in kept for tc in m["tool_calls"]) else m
-                for m in msgs]
+        out = [{**m, "tool_calls": [tc for tc in m["tool_calls"] if tc["id"] in kept]}
+               if m.get("tool_calls") and any(tc["id"] not in kept for tc in m["tool_calls"]) else m
+               for m in msgs]
+        # by identity, so a subclass that inserts messages (compact + ReFold) keeps the map
+        self._history_of = {id(m): h for m, h in zip(out, self.engine.rendered_from)}
+        return out
+
+    def cache_anchors(self, rendered: list[dict]) -> list[int]:
+        """The task, the newest message, and the last message before the boundary: the one
+        this prompt is rendered with and the one the previous prompt was. Nothing before the
+        boundary changes until it advances, and an advance rewrites from the old boundary on
+        (a step behind it is already final), so the old boundary's mark is where the
+        advancing prompt reads the cache back, and the new one is where the next will."""
+        b, prev = self.boundary(), self._marked_boundary
+        self._marked_boundary = b
+        anchors = set(super().cache_anchors(rendered))
+        for step in {prev, b}:
+            if 0 < step < len(self.turns):  # step 0: the task, already marked
+                before = [j for j, m in enumerate(rendered)
+                          if self._history_of.get(id(m), len(self.messages)) < self.reply_msg[step]]
+                if before:
+                    anchors.add(before[-1])
+        return sorted(anchors)
 
     # ------------------------------------------------------------------ record
     def serialize(self, *extra_dicts) -> dict:

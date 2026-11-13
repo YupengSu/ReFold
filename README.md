@@ -24,6 +24,8 @@
 - **2026-11**: Fixed two bugs with parallel tool calls ([#1](https://github.com/YupengSu/ReFold/issues/1)).
 - **2026-11**: Fixed two bugs in reading a reply's PROGRESS and STALE lines ([#3](https://github.com/YupengSu/ReFold/issues/3)).
 - **2026-11**: Terminal-Bench is scored by the rules of its official harnesses ([#4](https://github.com/YupengSu/ReFold/issues/4)).
+- **2026-11**: A missed-PROGRESS reminder stays in the prompt, so it no longer breaks the cached prefix ([#6](https://github.com/YupengSu/ReFold/pull/6)).
+- **2026-11**: Claude models run on Anthropic's API, with cache breakpoints placed for the chunk boundary ([#6](https://github.com/YupengSu/ReFold/pull/6)).
 
 ## Overview
 
@@ -124,6 +126,15 @@ refold score runs/demo && refold report runs/demo
 ```
 
 `refold dashboard runs/demo` opens the same page for any run, live or finished.
+
+A Claude model on Anthropic's API needs no server, only `ANTHROPIC_API_KEY`. It runs as it is
+used for agentic coding, with adaptive thinking at `medium` effort, the 16,384-token reply of every
+cell, the reply streamed, and prompt-cache breakpoints placed before the boundary so a chunk
+advance reads the cache back. Override any of it with `-c`, e.g. `-c model.model_kwargs.reasoning_effort=high`.
+
+```bash
+refold run --strategy refold --model anthropic/claude-opus-4-8 --benchmark swebench --workers 4 -o runs/opus
+```
 
 ## Code
 

@@ -42,6 +42,33 @@ STEP_LIMIT = 250
 METRICS_INTERVAL = 5.0  # seconds between /metrics samples
 LIVE_METRICS_INTERVAL = 1.0  # with --live: the dashboard's KV-cache curve needs the finer series
 
+# A Claude model on Anthropic's API: adaptive thinking at medium effort where the model has
+# it (bound by cost; raise it with -c), the reply ceiling every cell has (MAX_TOKENS;
+# thinking counts toward it), the reply streamed, and cache breakpoints.
+CLAUDE_EFFORT = "medium"
+STREAMING_MODEL = "refold.models.StreamingLitellmModel"
+# Models whose thinking blocks are bound to the conversation before them ("preserved
+# thinking"): an edit to earlier history invalidates every later block, a 400 on accounts
+# the check is enforced for. ReFold edits history by design, so a block it invalidates is
+# dropped instead; base never edits, so it is unaffected.
+PRESERVED_THINKING = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1",
+                      "claude-fable-5-2", "claude-mythos-5-1", "claude-mythos-5-2")
+THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+
+
+def claude_model_kwargs(model: str) -> dict:
+    import litellm  # only here: a slow import the rest of the launcher does without
+
+    name = model.rsplit("/", 1)[-1]
+    info = litellm.model_cost.get(name) or {}
+    kwargs: dict = {}
+    if info.get("supports_adaptive_thinking"):
+        kwargs["reasoning_effort"] = CLAUDE_EFFORT  # litellm: thinking adaptive + output_config.effort
+    if name in PRESERVED_THINKING:
+        kwargs["thinking"] = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+        kwargs["extra_headers"] = {"anthropic-beta": THINKING_BINDING_BETA}
+    return kwargs
+
 
 def build_config(strategy: str, model: str, api_base: str | None = None, overrides: list[str] = (),
                  compact: bool = False, context_budget: int = FULL_BUDGET, cost_limit: float | None = None,
@@ -74,12 +101,24 @@ def build_config(strategy: str, model: str, api_base: str | None = None, overrid
         # A local server: temperature 0, as every reported vLLM cell passed it.
         model = model if model.startswith("openai/") else f"openai/{model}"
         model_kwargs = {"temperature": 0.0, "api_base": api_base, "api_key": "dummy"}
+    elif "claude" in model.lower():
+        model_kwargs = claude_model_kwargs(model)  # a -c model.model_kwargs.* override still wins
+        model_class = model_class or STREAMING_MODEL
+        if "cache_breakpoints" in fields:
+            # Anthropic caches only at marked points: unmarked, every call is billed uncached
+            agent.setdefault("cache_breakpoints", True)
     else:
-        model_kwargs = {}  # a cloud API: nothing beyond the benchmark config
+        model_kwargs = {}  # another cloud API: nothing beyond the benchmark config
     return {"arm": arm, "strategy": strategy, "compact": compact, "agent_path": agent_path,
             "context_budget": context_budget, "agent": agent, "other": other,
             "model_name": model, "model_class": model_class,
             "model_kwargs": model_kwargs, "cost_limit": cost_limit}
+
+
+def _spec_value(v) -> str:
+    """A value as a `-c key=value` spec carries it: the runner reads the value as JSON, so a
+    dict or list goes as JSON; anything else as written, as before."""
+    return json.dumps(v) if isinstance(v, (dict, list)) else str(v)
 
 
 def _coerce(v: str):
@@ -110,7 +149,7 @@ def build_command(ids: list[str], cfg: dict, out: Path, workers: int, bench) -> 
             "-c", "model.cost_tracking=ignore_errors",
             "-c", f"model.model_kwargs.max_tokens={MAX_TOKENS}",
             "-c", f"model.model_kwargs.timeout={REQUEST_TIMEOUT}"]
-    cmd += [x for k, v in cfg["model_kwargs"].items() for x in ("-c", f"model.model_kwargs.{k}={v}")]
+    cmd += [x for k, v in cfg["model_kwargs"].items() for x in ("-c", f"model.model_kwargs.{k}={_spec_value(v)}")]
     cmd += [x for k, v in cfg["agent"].items() for x in ("-c", f"agent.{k}={v}")]
     cmd += [x for k, v in cfg.get("other", {}).items() for x in ("-c", f"{k}={v}")]
     return cmd
